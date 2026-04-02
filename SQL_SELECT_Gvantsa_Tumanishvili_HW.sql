@@ -1,3 +1,5 @@
+/*setting schema*/
+SET search_path = public;
 /*Part1, 1st Question,*/
 
 /* I would choose the JOIN Solution for this one in production because of its perofrmance. Also it is optimized and doesn't have unnecessary intermediate steps*/
@@ -160,7 +162,7 @@ INNER JOIN public.inventory AS i ON s.store_id = i.store_id
 INNER JOIN public.rental AS r ON i.inventory_id = r.inventory_id
 INNER JOIN public.payment AS p ON r.rental_id = p.rental_id
 WHERE p.payment_date >= '2017-04-01'
-GROUP BY a.address, a.address2
+GROUP BY s.store_id, a.address, a.address2 
 ORDER BY revenue DESC;
 /*Advantages: BEst performance in most databases, no intermediate result sets, fully optimized and efficient for large datasets and aggregations
 Disadvantages: Lower readability, harder to separate logic into steps*/
@@ -506,13 +508,13 @@ Task Conditions:
 
 SELECT 
     f.release_year,
-    COUNT(*) FILTER (WHERE c.name = 'Drama') AS number_of_drama_movies,
-    COUNT(*) FILTER (WHERE c.name = 'Travel') AS number_of_travel_movies,
-    COUNT(*) FILTER (WHERE c.name = 'Documentary') AS number_of_documentary_movies
+    COUNT(*) FILTER (WHERE UPPER(c.name) = 'DRAMA') AS number_of_drama_movies,
+    COUNT(*) FILTER (WHERE UPPER(c.name) = 'TRAVEL') AS number_of_travel_movies,
+    COUNT(*) FILTER (WHERE UPPER(c.name) = 'DOCUMENTARY') AS number_of_documentary_movies
 FROM public.film AS f
 INNER JOIN public.film_category AS fc ON f.film_id = fc.film_id
 INNER JOIN public.category AS c ON fc.category_id = c.category_id
-WHERE c.name IN ('Drama', 'Travel', 'Documentary')
+WHERE UPPER(c.name) IN ('DRAMA', 'TRAVEL', 'DOCUMENTARY')
 GROUP BY f.release_year
 ORDER BY f.release_year DESC;
 /*Advantages:Extremely clean and readable due to FILTER, Performs all aggregations in one scan, Very efficient (no repeated scans), Best suited for pivot-style reporting
@@ -556,17 +558,17 @@ SELECT
      FROM public.film_category fc2 
      INNER JOIN public.category c2 ON fc2.category_id = c2.category_id 
      INNER JOIN public.film f2 ON fc2.film_id = f2.film_id
-     WHERE c2.name = 'Drama' AND f2.release_year = f.release_year) AS number_of_drama_movies,
+     WHERE UPPER(c2.name) = 'DRAMA' AND f2.release_year = f.release_year) AS number_of_drama_movies,
     (SELECT COUNT(*) 
      FROM public.film_category fc3 
      INNER JOIN public.category c3 ON fc3.category_id = c3.category_id 
      INNER JOIN public.film f3 ON fc3.film_id = f3.film_id
-     WHERE c3.name = 'Travel' AND f3.release_year = f.release_year) AS number_of_travel_movies,
+     WHERE UPPER(c3.name) = 'TRAVEL' AND f3.release_year = f.release_year) AS number_of_travel_movies,
     (SELECT COUNT(*) 
      FROM public.film_category fc4 
      INNER JOIN public.category c4 ON fc4.category_id = c4.category_id 
      INNER JOIN public.film f4 ON fc4.film_id = f4.film_id
-     WHERE c4.name = 'Documentary' AND f4.release_year = f.release_year) AS number_of_documentary_movies
+     WHERE UPPER(c4.name) = 'DOCUMENTARY' AND f4.release_year = f.release_year) AS number_of_documentary_movies
 FROM public.film AS f
 ORDER BY f.release_year DESC;
 /* Advantages: Conceptually easy to understand, Clearly separates each genre calculation
@@ -609,17 +611,17 @@ Disadvantages: poor performance, not scalable for large datasets and harder to m
 WITH genre_counts AS (
     SELECT 
         f.release_year,
-        c.name AS genre_name
+        UPPER(c.name) AS genre_name
     FROM public.film AS f
     INNER JOIN public.film_category AS fc ON f.film_id = fc.film_id
     INNER JOIN public.category AS c ON fc.category_id = c.category_id
-    WHERE c.name IN ('Drama', 'Travel', 'Documentary')
+    WHERE UPPER(c.name) IN ('DRAMA', 'TRAVEL', 'DOCUMENTARY')
 )
 SELECT 
     release_year,
-    SUM(CASE WHEN genre_name = 'Drama' THEN 1 ELSE 0 END) AS number_of_drama_movies,
-    SUM(CASE WHEN genre_name = 'Travel' THEN 1 ELSE 0 END) AS number_of_travel_movies,
-    SUM(CASE WHEN genre_name = 'Documentary' THEN 1 ELSE 0 END) AS number_of_documentary_movies
+    SUM(CASE WHEN genre_name = 'DRAMA' THEN 1 ELSE 0 END) AS number_of_drama_movies,
+    SUM(CASE WHEN genre_name = 'TRAVEL' THEN 1 ELSE 0 END) AS number_of_travel_movies,
+    SUM(CASE WHEN genre_name = 'DOCUMENTARY' THEN 1 ELSE 0 END) AS number_of_documentary_movies
 FROM genre_counts
 GROUP BY release_year
 ORDER BY release_year DESC;
@@ -669,17 +671,31 @@ All three approaches are possible. JOIN solution is best one, because it perform
      - Enables calculation of total revenue per employee
 */
 
+WITH StaffLastStore AS (
+    -- Step 1: Identify the last store each staff member worked at in 2017
+    SELECT DISTINCT ON (p.staff_id)
+        p.staff_id,
+        st.store_id,
+        a.address,
+        a.address2
+    FROM public.payment AS p
+    INNER JOIN public.rental AS r ON p.rental_id = r.rental_id
+    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
+    INNER JOIN public.store AS st ON i.store_id = st.store_id
+    INNER JOIN public.address AS a ON st.address_id = a.address_id
+    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
+    ORDER BY p.staff_id, p.payment_date DESC
+)
 SELECT 
     s.first_name, 
     s.last_name, 
-    a.address || ' ' || COALESCE(a.address2, '') AS store_location,
+    sls.address || ' ' || COALESCE(sls.address2, '') AS last_store_location,
     SUM(p.amount) AS total_revenue
 FROM public.staff AS s
 INNER JOIN public.payment AS p ON s.staff_id = p.staff_id
-INNER JOIN public.store AS st ON s.store_id = st.store_id
-INNER JOIN public.address AS a ON st.address_id = a.address_id
-WHERE p.payment_date BETWEEN '2017-01-01' AND '2017-12-31'
-GROUP BY s.staff_id, s.first_name, s.last_name, a.address, a.address2
+INNER JOIN StaffLastStore AS sls ON s.staff_id = sls.staff_id
+WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
+GROUP BY s.staff_id, s.first_name, s.last_name, sls.address, sls.address2
 ORDER BY total_revenue DESC
 LIMIT 3;
 /*Advantages, Single-pass aggregation therefore efficient, Direct use of payment table thus correct business logic, No intermediate steps, Best for large financial datasets
@@ -725,20 +741,39 @@ Disadvantages: Harder to isolate logic (aggregation + joins together), Slightly 
      - Sorts aggregated results in descending order
      - Restricts output to only the top performers
 */
+WITH StaffStoreHistory AS (
+    -- Trace payment to store and rank by date to find the "latest"
+    SELECT 
+        p.staff_id,
+        st.address_id,
+        ROW_NUMBER() OVER (PARTITION BY p.staff_id ORDER BY p.payment_date DESC) as latest_rank
+    FROM public.payment AS p
+    INNER JOIN public.rental AS r ON p.rental_id = r.rental_id
+    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
+    INNER JOIN public.store AS st ON i.store_id = st.store_id
+    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
+),
+LatestStore AS (
+    -- Filter for only the most recent store record per staff
+    SELECT staff_id, address_id
+    FROM StaffStoreHistory
+    WHERE latest_rank = 1
+)
 SELECT 
     s.first_name, 
     s.last_name, 
-    a.address || ' ' || COALESCE(a.address2, '') AS store_location,
+    a.address || ' ' || COALESCE(a.address2, '') AS last_store_location,
     revenue_totals.annual_revenue AS revenue
 FROM public.staff AS s
 INNER JOIN (
+    -- Revenue calculation with corrected date boundaries
     SELECT p.staff_id, SUM(p.amount) AS annual_revenue
     FROM public.payment AS p
-    WHERE p.payment_date BETWEEN '2017-01-01' AND '2017-12-31'
+    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
     GROUP BY p.staff_id
 ) AS revenue_totals ON s.staff_id = revenue_totals.staff_id
-INNER JOIN public.store AS st ON s.store_id = st.store_id
-INNER JOIN public.address AS a ON st.address_id = a.address_id
+INNER JOIN LatestStore AS ls ON s.staff_id = ls.staff_id
+INNER JOIN public.address AS a ON ls.address_id = a.address_id
 ORDER BY revenue DESC
 LIMIT 3;
 /*Advantages: Separates revenue calculation from staff info, Cleaner than JOIN logically, Easy to reuse revenue subquery
@@ -786,23 +821,36 @@ Disadvantgaes: Still relies on staff.store_id thus same logical flaw originally,
      - Returns only the top 3 rows
 */
 
-WITH staff_performance AS (
+WITH staff_revenue AS (
+    -- Calculate total revenue with corrected date boundaries
     SELECT 
         staff_id, 
         SUM(amount) AS total_earned
     FROM public.payment
-    WHERE payment_date BETWEEN '2017-01-01' AND '2017-12-31'
+    WHERE payment_date >= '2017-01-01' AND payment_date < '2018-01-01'
     GROUP BY staff_id
+),
+last_payment_location AS (
+    -- Trace the store for the very last payment of 2017 per staff
+    SELECT DISTINCT ON (p.staff_id)
+        p.staff_id,
+        st.address_id
+    FROM public.payment AS p
+    INNER JOIN public.rental AS r ON p.rental_id = r.rental_id
+    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
+    INNER JOIN public.store AS st ON i.store_id = st.store_id
+    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
+    ORDER BY p.staff_id, p.payment_date DESC
 )
 SELECT 
     s.first_name, 
     s.last_name, 
     a.address || ' ' || COALESCE(a.address2, '') AS last_store_address,
-    sp.total_earned AS revenue
+    sr.total_earned AS revenue
 FROM public.staff AS s
-INNER JOIN staff_performance AS sp ON s.staff_id = sp.staff_id
-INNER JOIN public.store AS st ON s.store_id = st.store_id
-INNER JOIN public.address AS a ON st.address_id = a.address_id
+INNER JOIN staff_revenue AS sr ON s.staff_id = sr.staff_id
+INNER JOIN last_payment_location AS lpl ON s.staff_id = lpl.staff_id
+INNER JOIN public.address AS a ON lpl.address_id = a.address_id
 ORDER BY revenue DESC
 LIMIT 3;
 /*Advantages: Best readability, Clearly separates:, revenue calculation, final output, Easy to extend (e.g., bonuses, rankings)
@@ -995,6 +1043,7 @@ SELECT
         WHEN f.rating = 'PG-13' THEN '13+'
         WHEN f.rating = 'R' THEN '17+'
         WHEN f.rating = 'NC-17' THEN '18+'
+        ELSE 'Not Rated'
     END AS target_age,
     mp.total_rentals
 FROM public.film AS f
@@ -1050,7 +1099,7 @@ optimized by the database engine. However, for more complex analytical queries, 
 SELECT 
     a.first_name, 
     a.last_name, 
-    (2026 - MAX(f.release_year)) AS years_since_last_film
+    (EXTRACT(YEAR FROM CURRENT_DATE) - MAX(f.release_year)) AS years_since_last_film
 FROM public.actor AS a
 INNER JOIN public.film_actor AS fa ON a.actor_id = fa.actor_id
 INNER JOIN public.film AS f ON fa.film_id = f.film_id
@@ -1106,7 +1155,7 @@ Logic is 'spread out' (harder to reuse)*/
 SELECT 
     a.first_name, 
     a.last_name, 
-    (2026 - latest_films.max_year) AS years_since_last_film
+    (EXTRACT(YEAR FROM CURRENT_DATE) - latest_films.max_year) AS years_since_last_film
 FROM public.actor AS a
 INNER JOIN (
     SELECT fa.actor_id, MAX(f.release_year) AS max_year
@@ -1165,6 +1214,7 @@ Sometimes harder for beginners*/
      - Sorts actors by years_since_last_film (descending)
 */
 WITH actor_max_year AS (
+    -- Grouping the logic for the most recent film per actor
     SELECT fa.actor_id, MAX(f.release_year) AS last_year
     FROM public.film_actor AS fa
     INNER JOIN public.film AS f ON fa.film_id = f.film_id
@@ -1173,7 +1223,7 @@ WITH actor_max_year AS (
 SELECT 
     a.first_name, 
     a.last_name, 
-    (2026 - amy.last_year) AS years_since_last_film
+    (EXTRACT(YEAR FROM CURRENT_DATE) - amy.last_year) AS years_since_last_film
 FROM public.actor AS a
 INNER JOIN actor_max_year AS amy ON a.actor_id = amy.actor_id
 ORDER BY years_since_last_film DESC;
@@ -1195,26 +1245,26 @@ All the approaches are possible but i would choose CTE in production because it'
 1. INNER JOIN film_actor (fa1)
    - Why: To link actors with their films (first instance - starting film)
    - Result set effect:
-     → Creates rows for each actor-film combination (f1 = starting film)
-     → Establishes the base year for gap calculation
+     - Creates rows for each actor-film combination (f1 = starting film)
+     - Establishes the base year for gap calculation
 
 2. INNER JOIN film (f1)
    - Why: To access release_year of the starting film
    - Result set effect:
-     → Adds film_year (start point of gap)
-     → Prepares first part of comparison
+     - Adds film_year (start point of gap)
+     - Prepares first part of comparison
 
 3. INNER JOIN film_actor (fa2)
    - Why: To link the same actor to all their films again (second instance - future films)
    - Result set effect:
-     → Creates combinations of (current film × all future films)
-     → Causes row explosion (many combinations per actor)
+     - Creates combinations of (current film  all future films)
+     - Causes row explosion (many combinations per actor)
 
 4. INNER JOIN film (f2)
    - Why: To access release_year of the potential "next" film
    - Result set effect:
-     → Adds candidate next_film_year values
-     → Enables comparison between current and future films
+     - Adds candidate next_film_year values
+     - Enables comparison between current and future films
 
 5. WHERE f2.release_year > f1.release_year
    - Why: To ensure only future films are considered
@@ -1264,8 +1314,7 @@ INNER JOIN public.film_actor AS fa2 ON a.actor_id = fa2.actor_id
 INNER JOIN public.film AS f2 ON fa2.film_id = f2.film_id
 WHERE f2.release_year > f1.release_year
 GROUP BY a.actor_id, a.first_name, a.last_name, f1.release_year
-HAVING (MIN(f2.release_year) - f1.release_year) > 1
-ORDER BY gap_size DESC;
+ORDER BY gap_size DESC, a.last_name;
 /*Advantages
 Explicit logic of relationships: clearly shows how each film is connected to the 'next' one.
 SQL basics only: works without advanced features (useful if environment is limited).
@@ -1340,21 +1389,25 @@ Less intuitive for 'next film' logic: you're manually simulating sequencing.*/
 SELECT 
     a.first_name, 
     a.last_name, 
-    f1.release_year,
-    ((SELECT MIN(f2.release_year) 
-      FROM public.film f2 
-      INNER JOIN public.film_actor fa2 ON f2.film_id = fa2.film_id 
-      WHERE fa2.actor_id = a.actor_id AND f2.release_year > f1.release_year
-     ) - f1.release_year) AS gap
+    f1.release_year AS current_film_year,
+    (
+        SELECT MIN(f2.release_year) 
+        FROM public.film f2 
+        INNER JOIN public.film_actor fa2 ON f2.film_id = fa2.film_id 
+        WHERE fa2.actor_id = a.actor_id 
+          AND f2.release_year > f1.release_year
+    ) - f1.release_year AS gap
 FROM public.actor AS a
 INNER JOIN public.film_actor AS fa1 ON a.actor_id = fa1.actor_id
 INNER JOIN public.film AS f1 ON fa1.film_id = f1.film_id
-WHERE ((SELECT MIN(f2.release_year) 
-      FROM public.film f2 
-      INNER JOIN public.film_actor fa2 ON f2.film_id = fa2.film_id 
-      WHERE fa2.actor_id = a.actor_id AND f2.release_year > f1.release_year
-     ) - f1.release_year) > 1
-ORDER BY gap DESC;
+WHERE (
+    SELECT MIN(f2.release_year) 
+    FROM public.film f2 
+    INNER JOIN public.film_actor fa2 ON f2.film_id = fa2.film_id 
+    WHERE fa2.actor_id = a.actor_id 
+      AND f2.release_year > f1.release_year
+) IS NOT NULL
+ORDER BY gap DESC, a.last_name;
 /*Advantages
 Very intuitive logic:
 'For each film, find the next film of the same actor' - easy to understand.
@@ -1437,7 +1490,9 @@ gaps_calc AS (
         y1.release_year AS start_year, 
         MIN(y2.release_year) AS end_year
     FROM actor_film_years y1
-    INNER JOIN actor_film_years y2 ON y1.actor_id = y2.actor_id AND y2.release_year > y1.release_year
+    INNER JOIN actor_film_years y2 
+        ON y1.actor_id = y2.actor_id 
+        AND y2.release_year > y1.release_year
     GROUP BY y1.actor_id, y1.release_year
 )
 SELECT 
@@ -1448,8 +1503,7 @@ SELECT
     (gc.end_year - gc.start_year) AS gap_duration
 FROM public.actor AS a
 INNER JOIN gaps_calc AS gc ON a.actor_id = gc.actor_id
-WHERE (gc.end_year - gc.start_year) > 1
-ORDER BY gap_duration DESC;
+ORDER BY gap_duration DESC, a.last_name, gc.start_year;
 /*Advantages:
 Most natural solution for sequential gaps
 - LEAD() directly represents 'next film'
