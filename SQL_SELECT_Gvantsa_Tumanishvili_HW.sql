@@ -821,38 +821,37 @@ Disadvantgaes: Still relies on staff.store_id thus same logical flaw originally,
      - Returns only the top 3 rows
 */
 
-WITH staff_revenue AS (
-    -- Calculate total revenue with corrected date boundaries
-    SELECT 
-        staff_id, 
-        SUM(amount) AS total_earned
-    FROM public.payment
-    WHERE payment_date >= '2017-01-01' AND payment_date < '2018-01-01'
-    GROUP BY staff_id
-),
-last_payment_location AS (
-    -- Trace the store for the very last payment of 2017 per staff
-    SELECT DISTINCT ON (p.staff_id)
-        p.staff_id,
-        st.address_id
-    FROM public.payment AS p
-    INNER JOIN public.rental AS r ON p.rental_id = r.rental_id
-    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
-    INNER JOIN public.store AS st ON i.store_id = st.store_id
-    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
-    ORDER BY p.staff_id, p.payment_date DESC
-)
 SELECT 
     s.first_name, 
     s.last_name, 
     a.address || ' ' || COALESCE(a.address2, '') AS last_store_address,
     sr.total_earned AS revenue
 FROM public.staff AS s
-INNER JOIN staff_revenue AS sr ON s.staff_id = sr.staff_id
-INNER JOIN last_payment_location AS lpl ON s.staff_id = lpl.staff_id
+INNER JOIN (
+    SELECT p.staff_id, SUM(p.amount) AS total_earned
+    FROM public.payment AS p
+    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
+    GROUP BY p.staff_id
+) AS sr ON s.staff_id = sr.staff_id
+INNER JOIN (
+    SELECT p1.staff_id, MAX(st.address_id) AS address_id
+    FROM public.payment AS p1
+    INNER JOIN public.rental AS r ON p1.rental_id = r.rental_id
+    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
+    INNER JOIN public.store AS st ON i.store_id = st.store_id
+    WHERE p1.payment_date = (
+        SELECT MAX(p2.payment_date)
+        FROM public.payment AS p2
+        WHERE p2.staff_id = p1.staff_id
+          AND p2.payment_date >= '2017-01-01' 
+          AND p2.payment_date < '2018-01-01'
+    )
+    GROUP BY p1.staff_id -- This line prevents the "Hanna Carry" duplicates
+) AS lpl ON s.staff_id = lpl.staff_id
 INNER JOIN public.address AS a ON lpl.address_id = a.address_id
 ORDER BY revenue DESC
 LIMIT 3;
+
 /*Advantages: Best readability, Clearly separates:, revenue calculation, final output, Easy to extend (e.g., bonuses, rankings)
 advantages: Extra step thus possible memory overhead, Not necessary for simple aggregation, Same issue if store logic not corrected*/
 
