@@ -671,32 +671,38 @@ All three approaches are possible. JOIN solution is best one, because it perform
      - Enables calculation of total revenue per employee
 */
 
-WITH StaffLastStore AS (
-    -- Step 1: Identify the last store each staff member worked at in 2017
-    SELECT DISTINCT ON (p.staff_id)
-        p.staff_id,
-        st.store_id,
-        a.address,
-        a.address2
-    FROM public.payment AS p
-    INNER JOIN public.rental AS r ON p.rental_id = r.rental_id
-    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
-    INNER JOIN public.store AS st ON i.store_id = st.store_id
-    INNER JOIN public.address AS a ON st.address_id = a.address_id
-    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
-    ORDER BY p.staff_id, p.payment_date DESC
-)
 SELECT 
     s.first_name, 
     s.last_name, 
-    sls.address || ' ' || COALESCE(sls.address2, '') AS last_store_location,
-    SUM(p.amount) AS total_revenue
+    MAX(a.address || ' ' || COALESCE(a.address2, '')) AS last_store_address,
+    rev.total_earned AS revenue
 FROM public.staff AS s
-INNER JOIN public.payment AS p ON s.staff_id = p.staff_id
-INNER JOIN StaffLastStore AS sls ON s.staff_id = sls.staff_id
-WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
-GROUP BY s.staff_id, s.first_name, s.last_name, sls.address, sls.address2
-ORDER BY total_revenue DESC
+-- Step 1: Join to the pre-calculated revenue
+INNER JOIN (
+    SELECT staff_id, SUM(amount) AS total_earned
+    FROM public.payment
+    WHERE payment_date >= '2017-01-01' AND payment_date < '2018-01-01'
+    GROUP BY staff_id
+) AS rev ON s.staff_id = rev.staff_id
+-- Step 2: Join to the last payment record
+INNER JOIN public.payment AS p1 ON s.staff_id = p1.staff_id
+LEFT JOIN public.payment AS p2 ON s.staff_id = p2.staff_id 
+    AND p2.payment_date > p1.payment_date
+    AND p2.payment_date >= '2017-01-01' 
+    AND p2.payment_date < '2018-01-01'
+-- Step 3: Get store/address details
+INNER JOIN public.rental AS r ON p1.rental_id = r.rental_id
+INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
+INNER JOIN public.store AS st ON i.store_id = st.store_id
+INNER JOIN public.address AS a ON st.address_id = a.address_id
+WHERE p1.payment_date >= '2017-01-01' AND p1.payment_date < '2018-01-01'
+  AND p2.payment_id IS NULL -- Finds the 'max' payment
+GROUP BY 
+    s.staff_id, 
+    s.first_name, 
+    s.last_name, 
+    rev.total_earned
+ORDER BY revenue DESC
 LIMIT 3;
 /*Advantages, Single-pass aggregation therefore efficient, Direct use of payment table thus correct business logic, No intermediate steps, Best for large financial datasets
 Disadvantages: Harder to isolate logic (aggregation + joins together), Slightly less readable, Handling 'last store'  precisely would make it more complex*/
@@ -741,39 +747,36 @@ Disadvantages: Harder to isolate logic (aggregation + joins together), Slightly 
      - Sorts aggregated results in descending order
      - Restricts output to only the top performers
 */
-WITH StaffStoreHistory AS (
-    -- Trace payment to store and rank by date to find the "latest"
-    SELECT 
-        p.staff_id,
-        st.address_id,
-        ROW_NUMBER() OVER (PARTITION BY p.staff_id ORDER BY p.payment_date DESC) as latest_rank
-    FROM public.payment AS p
-    INNER JOIN public.rental AS r ON p.rental_id = r.rental_id
-    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
-    INNER JOIN public.store AS st ON i.store_id = st.store_id
-    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
-),
-LatestStore AS (
-    -- Filter for only the most recent store record per staff
-    SELECT staff_id, address_id
-    FROM StaffStoreHistory
-    WHERE latest_rank = 1
-)
 SELECT 
     s.first_name, 
     s.last_name, 
-    a.address || ' ' || COALESCE(a.address2, '') AS last_store_location,
-    revenue_totals.annual_revenue AS revenue
+    a.address || ' ' || COALESCE(a.address2, '') AS last_store_address,
+    sr.total_earned AS revenue
 FROM public.staff AS s
 INNER JOIN (
-    -- Revenue calculation with corrected date boundaries
-    SELECT p.staff_id, SUM(p.amount) AS annual_revenue
+    -- 1. Calculate Revenue (Standard Subquery)
+    SELECT p.staff_id, SUM(p.amount) AS total_earned
     FROM public.payment AS p
     WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
     GROUP BY p.staff_id
-) AS revenue_totals ON s.staff_id = revenue_totals.staff_id
-INNER JOIN LatestStore AS ls ON s.staff_id = ls.staff_id
-INNER JOIN public.address AS a ON ls.address_id = a.address_id
+) AS sr ON s.staff_id = sr.staff_id
+INNER JOIN (
+    -- 2. Find Location (Fixed Subquery with MIN/MAX to prevent duplicates)
+    SELECT p1.staff_id, MAX(st.address_id) AS address_id
+    FROM public.payment AS p1
+    INNER JOIN public.rental AS r ON p1.rental_id = r.rental_id
+    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
+    INNER JOIN public.store AS st ON i.store_id = st.store_id
+    WHERE p1.payment_date = (
+        SELECT MAX(p2.payment_date)
+        FROM public.payment AS p2
+        WHERE p2.staff_id = p1.staff_id
+          AND p2.payment_date >= '2017-01-01' 
+          AND p2.payment_date < '2018-01-01'
+    )
+    GROUP BY p1.staff_id -- This line prevents the "Hanna Carry" duplicates
+) AS lpl ON s.staff_id = lpl.staff_id
+INNER JOIN public.address AS a ON lpl.address_id = a.address_id
 ORDER BY revenue DESC
 LIMIT 3;
 /*Advantages: Separates revenue calculation from staff info, Cleaner than JOIN logically, Easy to reuse revenue subquery
@@ -821,34 +824,41 @@ Disadvantgaes: Still relies on staff.store_id thus same logical flaw originally,
      - Returns only the top 3 rows
 */
 
+/* Task 2.1: CTE Solution */
+
+WITH staff_revenue AS (
+    -- Step 1: Calculate total revenue per staff
+    SELECT staff_id, SUM(amount) AS total_earned
+    FROM public.payment
+    WHERE payment_date >= '2017-01-01' AND payment_date < '2018-01-01'
+    GROUP BY staff_id
+),
+last_payment_time AS (
+    -- Step 2: Identify the timestamp of the last payment for each staff
+    SELECT staff_id, MAX(payment_date) as max_date
+    FROM public.payment
+    WHERE payment_date >= '2017-01-01' AND payment_date < '2018-01-01'
+    GROUP BY staff_id
+),
+last_location AS (
+    -- Step 3: Map that timestamp back to a store address
+    SELECT p.staff_id, MAX(st.address_id) AS address_id
+    FROM public.payment AS p
+    INNER JOIN last_payment_time AS lpt ON p.staff_id = lpt.staff_id AND p.payment_date = lpt.max_date
+    INNER JOIN public.rental AS r ON p.rental_id = r.rental_id
+    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
+    INNER JOIN public.store AS st ON i.store_id = st.store_id
+    GROUP BY p.staff_id
+)
 SELECT 
     s.first_name, 
     s.last_name, 
     a.address || ' ' || COALESCE(a.address2, '') AS last_store_address,
     sr.total_earned AS revenue
 FROM public.staff AS s
-INNER JOIN (
-    SELECT p.staff_id, SUM(p.amount) AS total_earned
-    FROM public.payment AS p
-    WHERE p.payment_date >= '2017-01-01' AND p.payment_date < '2018-01-01'
-    GROUP BY p.staff_id
-) AS sr ON s.staff_id = sr.staff_id
-INNER JOIN (
-    SELECT p1.staff_id, MAX(st.address_id) AS address_id
-    FROM public.payment AS p1
-    INNER JOIN public.rental AS r ON p1.rental_id = r.rental_id
-    INNER JOIN public.inventory AS i ON r.inventory_id = i.inventory_id
-    INNER JOIN public.store AS st ON i.store_id = st.store_id
-    WHERE p1.payment_date = (
-        SELECT MAX(p2.payment_date)
-        FROM public.payment AS p2
-        WHERE p2.staff_id = p1.staff_id
-          AND p2.payment_date >= '2017-01-01' 
-          AND p2.payment_date < '2018-01-01'
-    )
-    GROUP BY p1.staff_id -- This line prevents the "Hanna Carry" duplicates
-) AS lpl ON s.staff_id = lpl.staff_id
-INNER JOIN public.address AS a ON lpl.address_id = a.address_id
+INNER JOIN staff_revenue AS sr ON s.staff_id = sr.staff_id
+INNER JOIN last_location AS ll ON s.staff_id = ll.staff_id
+INNER JOIN public.address AS a ON ll.address_id = a.address_id
 ORDER BY revenue DESC
 LIMIT 3;
 
