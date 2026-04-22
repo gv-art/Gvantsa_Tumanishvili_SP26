@@ -735,6 +735,40 @@ SELECT COUNT(*) AS missing_record_ts
 FROM candidate_experience
 WHERE record_ts IS NULL;
 
+-- This is validation query at the end following my mentor's feedback (returns 0 for all)
+
+SELECT 'status_lookup' AS table_name, COUNT(*) AS missing_records FROM status_lookup WHERE record_ts IS NULL
+UNION ALL
+SELECT 'locations', COUNT(*) FROM locations WHERE record_ts IS NULL
+UNION ALL
+SELECT 'skills', COUNT(*) FROM skills WHERE record_ts IS NULL
+UNION ALL
+SELECT 'services', COUNT(*) FROM services WHERE record_ts IS NULL
+UNION ALL
+SELECT 'companies', COUNT(*) FROM companies WHERE record_ts IS NULL
+UNION ALL
+SELECT 'participant', COUNT(*) FROM participant WHERE record_ts IS NULL
+UNION ALL
+SELECT 'jobs', COUNT(*) FROM jobs WHERE record_ts IS NULL
+UNION ALL
+SELECT 'candidates', COUNT(*) FROM candidates WHERE record_ts IS NULL
+UNION ALL
+SELECT 'service_candidates', COUNT(*) FROM service_candidates WHERE record_ts IS NULL
+UNION ALL
+SELECT 'company_representatives', COUNT(*) FROM company_representatives WHERE record_ts IS NULL
+UNION ALL
+SELECT 'candidates_jobs_application', COUNT(*) FROM candidates_jobs_application WHERE record_ts IS NULL
+UNION ALL
+SELECT 'skills_candidates', COUNT(*) FROM skills_candidates WHERE record_ts IS NULL
+UNION ALL
+SELECT 'candidate_preferred_location', COUNT(*) FROM candidate_preferred_location WHERE record_ts IS NULL
+UNION ALL
+SELECT 'application_status_history', COUNT(*) FROM application_status_history WHERE record_ts IS NULL
+UNION ALL
+SELECT 'interview', COUNT(*) FROM interview WHERE record_ts IS NULL
+UNION ALL
+SELECT 'candidate_experience', COUNT(*) FROM candidate_experience WHERE record_ts IS NULL;
+
 
 
 
