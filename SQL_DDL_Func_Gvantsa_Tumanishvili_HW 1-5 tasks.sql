@@ -195,7 +195,6 @@ If no data is found for the entire request, a RAISE NOTICE is issued.
 
 /*4th task*/
 
-/*4th task*/
 
 CREATE OR REPLACE FUNCTION films_in_stock_by_title(p_title_pattern TEXT)
 RETURNS TABLE (
