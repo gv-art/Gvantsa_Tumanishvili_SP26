@@ -1,0 +1,113 @@
+* * 1. ANALYSIS OF OPERATIONS
+ * * - film_in_stock / film_not_in_stock: 
+ * These functions perform a count of the 'inventory' table for a specific film at a specific store.
+ * Logic: They call a helper function 'inventory_in_stock' for each item. film_in_stock returns 
+ * the count where this is true; film_not_in_stock returns the count where it is false.
+ * * - inventory_in_stock:
+ * Logic: Returns a Boolean. It checks the 'rental' table for the latest entry of an inventory_id. 
+ * If no rental exists, it is true. If rentals exist, it returns false only if a record has a 
+ * NULL return_date (meaning the item is currently out with a customer).
+ * * - get_customer_balance:
+ * Logic: Calculates the financial standing of a customer by summing the total cost of all rentals
+ * (including potential fees) and subtracting the total sum of payments recorded in the 'payment' table.
+ * * - inventory_held_by_customer:
+ * Logic: Returns the customer_id by looking up the 'rental' table for a specific inventory_id
+ * where the 'return_date' IS NULL. It identifies who physically has the item right now.
+ * * - last_day:
+ * Logic: A utility function that returns the last day of a given month. It uses date_trunc 
+ * to find the start of the month, adds one month, then subtracts one day.
+ */
+
+ /* * 2. REWARDS_REPORT ANALYSIS & CORRECTION
+ * * Why rewards_report returns 0 rows:
+ * The original function contains hardcoded date literals: '2005-06-14' AND '2005-06-16'. 
+ * Since the data in the database is historical and the current system time is in 2026, 
+ * this strict 3-day window in 2005 contains no relevant data.
+ *
+ * Correction: The dates have been made dynamic using CURRENT_DATE and INTERVAL.
+ * Also, the tmpSQL variable (Dynamic SQL) was removed as it is unnecessary for 
+ * a static query and poses a potential SQL injection risk/performance overhead.
+ */
+
+CREATE OR REPLACE FUNCTION rewards_report(
+    min_monthly_purchases INTEGER,
+    min_dollar_amount_purchased DECIMAL
+)
+RETURNS SETOF customer AS $$
+BEGIN
+    RETURN QUERY
+    SELECT c.*
+    FROM customer c
+    WHERE EXISTS (
+        SELECT 1
+        FROM payment p
+        WHERE p.customer_id = c.customer_id
+          AND p.payment_date BETWEEN (CURRENT_DATE - INTERVAL '1 month') AND CURRENT_DATE
+        GROUP BY p.customer_id
+        HAVING COUNT(*) >= min_monthly_purchases
+           AND SUM(p.amount) >= min_dollar_amount_purchased
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Test Query 1: Valid Input (looking for 1 purchase and $10 minimum)
+-- SELECT * FROM rewards_report(1, 10.00);
+
+-- Test Query 2: Edge Case (high requirements likely returning 0 rows but executing correctly)
+-- SELECT * FROM rewards_report(100, 5000.00);
+
+/* * 3. CODEBASE EFFICIENCY & BEST PRACTICES
+ * * - Redundant Functions: 'group_concat' and '_group_concat'.
+ * Why: These were custom-built before PostgreSQL introduced 'string_agg()'. 
+ * Using built-in aggregates is more efficient and follows standard PostgreSQL practices.
+ * * - Best Practice Violations:
+ * 'get_customer_balance' violates best practices by using procedural logic and loops 
+ * where set-based SQL joins would be significantly faster.
+ * 'rewards_report' (original) uses Dynamic SQL (EXECUTE) for a query that doesn't change 
+ * in structure, which prevents the database from optimizing the execution plan.
+ * * - group_concat / _group_concat:
+ * Logic: _group_concat is the state transition function that takes two strings 
+ * and joins them with a comma. It is used in views like 'actor_info' to aggregate titles.
+ * * - last_updated:
+ * Logic: A trigger function that sets the 'last_update' column to NOW(). 
+ * It is used globally across almost every table as a BEFORE UPDATE trigger.
+ * * - Potential for Incorrect Results:
+ * 'inventory_in_stock' can be wrong because it only checks for NULL return dates. 
+ * If an item is lost or destroyed and the customer pays a replacement fee, 
+ * the return_date remains NULL, but the item is not actually "out" - it is gone. 
+ * The logic fails to account for deleted inventory or "lost" statuses.
+ */
+
+ /* * 4. CORRECTING GET_CUSTOMER_BALANCE
+ * * Requirement Change: The function should calculate (rental_rate * duration) 
+ * + (overdue_fee * days_overdue) and subtract payments.
+ */
+
+CREATE OR REPLACE FUNCTION get_customer_balance(p_customer_id INTEGER, p_effective_date TIMESTAMPTZ)
+RETURNS DECIMAL AS $$
+DECLARE
+    v_rentals DECIMAL;
+    v_payments DECIMAL;
+BEGIN
+    -- Sum of all standard rental rates + overdue fines ($1 per day over limit)
+    SELECT SUM(f.rental_rate + 
+           CASE 
+               WHEN (COALESCE(r.return_date, CURRENT_TIMESTAMP) - r.rental_date) > (f.rental_duration * INTERVAL '1 day')
+               THEN EXTRACT(day FROM (COALESCE(r.return_date, CURRENT_TIMESTAMP) - r.rental_date) - (f.rental_duration * INTERVAL '1 day')) * 1.00
+               ELSE 0 
+           END) INTO v_rentals
+    FROM rental r
+    JOIN inventory i ON r.inventory_id = i.inventory_id
+    JOIN film f ON i.film_id = f.film_id
+    WHERE r.customer_id = p_customer_id
+      AND r.rental_date <= p_effective_date;
+
+    -- Sum of all actual payments made
+    SELECT SUM(amount) INTO v_payments
+    FROM payment
+    WHERE customer_id = p_customer_id
+      AND payment_date <= p_effective_date;
+
+    RETURN COALESCE(v_rentals, 0) - COALESCE(v_payments, 0);
+END;
+$$ LANGUAGE plpgsql;
