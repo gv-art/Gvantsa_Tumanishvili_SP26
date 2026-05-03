@@ -35,16 +35,19 @@ GRANT rental TO rentaluser;
 
 -- 4.Grant the "rental" group INSERT and UPDATE permissions for the "rental" table. Insert a new row and update one existing row in the "rental" table under that role.
 
--- Grant table-level permissions
+--  Grant table-level permissions
 GRANT SELECT, INSERT, UPDATE ON TABLE public.rental TO rental;
-
+--  Granting sequence permission
+GRANT USAGE ON SEQUENCE public.rental_rental_id_seq TO rental;
+--  Switch to the user to test
 SET ROLE rentaluser;
 INSERT INTO rental (rental_date, inventory_id, customer_id, return_date, staff_id)
 VALUES (CURRENT_TIMESTAMP, 10, 5, CURRENT_TIMESTAMP + INTERVAL '7 days', 1);
-
 UPDATE rental 
 SET return_date = CURRENT_TIMESTAMP 
 WHERE rental_id = 1;
+-- Switch back to original user
+RESET ROLE;
 
 -- 5. Revoke the "rental" group's INSERT permission for the "rental" table. Try to insert new rows into the "rental" table make sure this action is denied.
 --Switching to Admin to revoke the permission
@@ -60,8 +63,8 @@ VALUES (CURRENT_TIMESTAMP, 11, 6, CURRENT_TIMESTAMP + INTERVAL '2 days', 1);
 RESET ROLE;
 
 -- 6.Create a personalized role for any customer already existing in the dvd_rental database. The name of the role name must be client_{first_name}_{last_name} (omit curly brackets). The customer's payment and rental history must not be empty. 
-RESET ROLE;
-SELECT c.first_name, c.last_name
+-- Identify the customer
+SELECT c.customer_id, c.first_name, c.last_name
 FROM customer c
 JOIN rental r ON c.customer_id = r.customer_id
 JOIN payment p ON c.customer_id = p.customer_id
@@ -69,50 +72,77 @@ GROUP BY c.customer_id, c.first_name, c.last_name
 HAVING COUNT(r.rental_id) > 0 AND COUNT(p.payment_id) > 0
 LIMIT 1;
 
--- Runing as Superuser (Admin)
-CREATE ROLE client_mary_smith;
+--  Create the Role
+RESET ROLE;
+CREATE ROLE client_mary_smith WITH LOGIN;
 
--- demonstrating succesful access
--- Grant permission to the new role
-GRANT SELECT ON TABLE public.customer TO client_mary_smith;
+-- Grant Required Permissions
+GRANT SELECT ON public.customer TO client_mary_smith;
+GRANT SELECT ON public.rental TO client_mary_smith;
+GRANT SELECT ON public.payment TO client_mary_smith;
+
+--  Demonstration of Access
 SET ROLE client_mary_smith;
-SELECT first_name, last_name, email 
-FROM public.customer 
-WHERE first_name = 'MARY' AND last_name = 'SMITH';
 
--- demonstrating denied access
-SELECT * FROM public.payment;
+SELECT * FROM public.customer WHERE first_name = 'MARY' AND last_name = 'SMITH';
+SELECT * FROM public.rental;  -- Currently shows ALL rentals until RLS is applied
+SELECT * FROM public.payment; -- Currently shows ALL payments until RLS is applied
 
 RESET ROLE;
 
 --Task 3. Implement row-level security
--- finding Mary's ID (which was 1):
-SELECT customer_id FROM customer WHERE first_name = 'MARY' AND last_name = 'SMITH';
+-- We check if the role exists before creating; for policies, we use DROP IF EXISTS
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'client_mary_smith') THEN
+        CREATE ROLE client_mary_smith WITH LOGIN;
+    END IF;
+END $$;
 
--- Grant the role access to the tables
-GRANT SELECT ON rental, payment TO client_mary_smith;
+-- Ensure permissions are set
+GRANT SELECT ON public.customer, public.rental, public.payment TO client_mary_smith;
 
--- enabling row-level security:
+--  Enable RLS
 ALTER TABLE rental ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payment ENABLE ROW LEVEL SECURITY;
 
--- creating security pilicies for both tables:
+-- Create Dynamic Policies
+-- Instead of 'customer_id = 1', we extract the name from the role 'client_mary_smith'
+-- and find the matching ID in the customer table.
+DROP POLICY IF EXISTS mary_rental_policy ON rental;
 CREATE POLICY mary_rental_policy ON rental
     FOR SELECT
     TO client_mary_smith
-    USING (customer_id = 1); -- Assuming Mary's ID is 1
+    USING (
+        customer_id = (
+            SELECT customer_id FROM public.customer 
+            WHERE 'client_' || LOWER(first_name) || '_' || LOWER(last_name) = current_user
+        )
+    );
+
+DROP POLICY IF EXISTS mary_payment_policy ON payment;
 CREATE POLICY mary_payment_policy ON payment
     FOR SELECT
     TO client_mary_smith
-    USING (customer_id = 1);
+    USING (
+        customer_id = (
+            SELECT customer_id FROM public.customer 
+            WHERE 'client_' || LOWER(first_name) || '_' || LOWER(last_name) = current_user
+        )
+    );
 
--- demonstrating results:
+-- Demonstrating Successful Access
 SET ROLE client_mary_smith;
+SELECT 'Successful Access' AS status, COUNT(*) FROM rental; -- Should show only Mary's rentals
 
-SELECT * FROM rental;
+-- Demonstrating Denied Access
+-- This query attempts to find data for a different customer (e.g., ID 2).
+-- Because of RLS, this must return 0 rows even if customer 2 has data.
+SELECT 'Denied Access Test' AS status, * 
+FROM rental 
+WHERE customer_id = 2; 
 
-SELECT * FROM payment;
-
+RESET ROLE;
 
 
 
