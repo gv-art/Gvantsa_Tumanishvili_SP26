@@ -1,0 +1,80 @@
+1 --- Existing users/roles and their permissions 
+
+SELECT 
+    rolname AS role_name, 
+    rolsuper AS is_superuser, 
+    rolcreaterole AS can_create_role, 
+    rolcanlogin AS can_login, 
+    rolconnlimit AS connection_limit,
+    rolvaliduntil AS password_expiration
+FROM pg_roles
+WHERE rolname NOT LIKE 'pg_%';
+
+Based on the output the dvd_rental database currently only contains one user role: the default postgres superuser. This user has absolute administrative privileges 
+(is_superuser = true) and no connection restrictions (connection_limit = -1). There is no 'Separation of Duties.' In a secure environment, we should see separate roles 
+for different tasks (e.g., an 'admin' for maintenance and a 'web_user' for daily queries). Using the superuser for all operations is a major vulnerability because any 
+mistake or successful hack would result in a total loss of data control.
+Suggested improvement would be to disable remote login for the postgres account.
+
+2 --- Table-level privileges
+
+SELECT 
+    grantee, 
+    table_name, 
+    privilege_type 
+FROM information_schema.role_table_grants 
+WHERE table_schema = 'public';
+
+The output shows that table-level privileges are exclusively assigned to the postgres role. This user possesses a full suite of permissions, including SELECT, INSERT, 
+UPDATE, DELETE, and TRUNCATE across all tables and views (such as payment, customer, and film). No other users or groups have been granted any permissions.
+It is risky because using a single account for everything creates a single point of failure where one stolen password or mistake can destroy the entire database. 
+It lacks granular control, meaning even a simple app has the unnecessary power to delete all the data instead of just reading it.
+Potential vulnerability is excessive privilige. If an application connects using the postgres account to perform simple tasks (like listing films), it possesses 
+unnecessary permissions to delete data.
+Suggested improvement is to create read-only role. For example, a role named web_customer should be created that only has the SELECT privilage on the film and category 
+tables with no access to sensitive tables like payment.
+
+3 --- Any existing row-level security policies
+
+SELECT * FROM pg_policies;
+
+The query returned no results.This indicates that Row-Level Security (RLS) is not implemented for any table in the database. so all users who have table-level access 
+(e.g., SELECT, UPDATE) can access all rows within those tables.
+It is risky because without RLS, If a user is granted SELECT on customer, they can see all customers across all stores, not just one store.
+A clear vulnerability is that the public role often has default privileges on tables (e.g., SELECT access).This means:Any user in the database automatically inherits 
+access through the public role. As a result, users who should have limited access may still be able to read sensitive data from tables like customer, payment, or rental.
+Suggested improvement would be to Revoke default access from the public role so not every user automatically gets access to tables.
+
+4 --- Database-level settings like connection limits or authentication methods 
+
+SELECT rolname, rolconnlimit 
+FROM pg_roles 
+WHERE rolcanlogin = true;
+
+The query results show only one role with login capabilities: the postgres superuser, and its connection limit is set to -1 (unlimited).
+This setup is risky because an unlimited connection limit (-1) means a single buggy application could open enough connections to exhaust the server’s RAM or CPU, leading 
+to a total database crash. Also, Using the postgres superuser for standard database tasks is dangerous. If the credentials for this account are compromised, the attacker 
+has full control over the entire database server, not just the dvd_rental data.
+Vulnerability is that the database lacks specialized, restricted roles for daily operations, forcing all traffic through a superuser account with no resource caps.
+Suggested improvement would be to create a specific application user with limited privileges and a set connection limit.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

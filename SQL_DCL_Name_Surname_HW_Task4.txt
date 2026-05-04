@@ -1,0 +1,44 @@
+1. How can one restrict access to certain columns of a database table?
+
+In PostgreSQL, you we restrict access at a granular level using the GRANT command. Instead of giving a user access to an entire table, we specify the allowed columns 
+in parentheses. Alternatively, we can use Views to present a filtered version of the table.
+for example, if we want a marketing clerk to see customer names but not their email addresses or active status:
+SQL code will be:
+GRANT SELECT (first_name, last_name) ON TABLE customer TO marketing_user;
+Real Scenario:
+in a payroll system a human resources assistant might need access to the employees table to check job titles and departments, but their access is restricted so they cannot 
+see the salary or social_security_number columns.
+
+2. What is the difference between user identification and user authentication?
+Identification is the act of a user claiming an identity (e.g., typing a username). It tells the system "who" the user is.
+Authentication is the process of verifying that claim (e.g., providing a password or biometric). It proves the user is "who they say they are."
+practical example from dvd rental:
+a staff member tries to log in:
+Identification would be typing username. Authentification would be providing the correct password.
+A real scenario: in an airport security showing your boarding pass is identification. Showing your passport is authentication so you are proving you are the person named on that pass.
+
+3. What are the recommended authentication protocols for PostgreSQL?
+
+scram-sha-256  - The most secure native password-based method. It uses a challenge-response mechanism that prevents password sniffing.
+GSSAPI/Kerberos - Best for large enterprises to enable Single Sign-On (SSO).
+Certificate - Uses SSL certificates for high-security environments where the client must have a physical file to connect.
+Practical Example from dvd_rental:
+Configuring the pg_hba.conf file to ensure any user accessing the dvd_rental database from the local network must use the most secure password method.
+Real Scenario
+Banking Apps: Most modern web applications use SCRAM or OpenID Connect so that even if a database backup is stolen, the passwords aren't stored in a way that can be 
+easily decrypted.
+
+4. What is proxy authentication in PostgreSQL and what is it for? Why does it make the previously discussed role-based access control easier to implement?
+
+Proxy Authentication (often implemented via the SET ROLE command in Postgres) allows a user to log in with their own credentials but then "assume" the identity and 
+permissions of a specific group role.
+It simplifies Role-Based Access Control because Instead of assigning 50 different permissions to 10 different employees, we assign those permissions to one Group Role 
+(e.g., manager_role). When an employee logs in, they "switch" into that role. This makes onboarding and offboarding easy—you just add or remove the user from the group.
+Practical example from dvd rental: Practical Example (dvd_rental)
+a.Create a group role: CREATE ROLE rental_manager;
+b.Grant it full access to rental and payment tables.
+c.Grant the role to a user: GRANT rental_manager TO alice;
+d.Alice logs in as herself and executes: SET ROLE rental_manager;
+Real Scenario
+Contractor Access - A temporary database administrator is hired. Instead of manually granting them access to 200 tables, we grant them the temp_dba role. When their 
+contract ends, we simply revoke that one role, ensuring no "permission creep" is left behind in the system.
