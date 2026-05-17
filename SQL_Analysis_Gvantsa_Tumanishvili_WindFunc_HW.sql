@@ -13,7 +13,7 @@ WITH CustomerSales AS (
 ChannelTotals AS (
     SELECT 
         channel_desc, 
-        SUM(total_sales) as channel_grand_total
+        SUM(total_sales) AS channel_grand_total
     FROM CustomerSales
     GROUP BY channel_desc
 ),
@@ -23,10 +23,10 @@ RankedSales AS (
         cs1.customer_name,
         ROUND(cs1.total_sales, 2) AS total_sales,
         ROUND((cs1.total_sales / ct.channel_grand_total) * 100, 4) AS sales_percentage,
-        (SELECT COUNT(DISTINCT cs2.total_sales) + 1 
-         FROM CustomerSales cs2 
-         WHERE cs2.channel_desc = cs1.channel_desc 
-           AND cs2.total_sales > cs1.total_sales) AS rank
+        ROW_NUMBER() OVER (
+            PARTITION BY cs1.channel_desc 
+            ORDER BY cs1.total_sales DESC
+        ) AS sales_rank
     FROM CustomerSales cs1
     JOIN ChannelTotals ct ON cs1.channel_desc = ct.channel_desc
 )
@@ -36,7 +36,7 @@ SELECT
     total_sales,
     sales_percentage || '%' AS sales_percentage
 FROM RankedSales
-WHERE rank <= 5
+WHERE sales_rank <= 5
 ORDER BY channel_desc, total_sales DESC;
 
 
@@ -46,13 +46,12 @@ CREATE EXTENSION IF NOT EXISTS tablefunc;
 
 SELECT 
     product_name,
-    COALESCE(q1, 0) AS q1,
-    COALESCE(q2, 0) AS q2,
-    COALESCE(q3, 0) AS q3,
-    COALESCE(q4, 0) AS q4,
+    COALESCE(q1, 0) AS Q1,
+    COALESCE(q2, 0) AS Q2,
+    COALESCE(q3, 0) AS Q3,
+    COALESCE(q4, 0) AS Q4,
     ROUND((COALESCE(q1,0) + COALESCE(q2,0) + COALESCE(q3,0) + COALESCE(q4,0)), 2) AS year_sum
 FROM crosstab(
-    -- Source query: must return Row ID, Category (Column Header), and Value
     $$
     SELECT 
         p.prod_name,
@@ -62,9 +61,9 @@ FROM crosstab(
     JOIN sh.products p ON s.prod_id = p.prod_id
     JOIN sh.times t ON s.time_id = t.time_id
     JOIN sh.customers cust ON s.cust_id = cust.cust_id
-    JOIN sh.countries count ON cust.country_id = count.country_id
+    JOIN sh.countries ctry ON cust.country_id = ctry.country_id -- Fix: Changed alias 'count' to 'ctry'
     WHERE p.prod_category = 'Photo'
-      AND count.country_region = 'Asia'
+      AND ctry.country_region = 'Asia' -- Fix: Updated reference to use new 'ctry' alias
       AND t.calendar_year = 2000
     GROUP BY p.prod_name, t.calendar_quarter_number
     ORDER BY 1, 2
@@ -81,31 +80,43 @@ FROM crosstab(
 ORDER BY year_sum DESC;
 
 -- Task 3
-
-WITH Top300Customers AS (
+WITH ChannelCustomerSales AS (
     SELECT 
-        s.cust_id
+        ch.channel_desc,
+        c.cust_id,
+        c.cust_last_name,
+        c.cust_first_name,
+        SUM(s.amount_sold) AS total_amount_sold
     FROM sh.sales s
+    JOIN sh.customers c ON s.cust_id = c.cust_id
+    JOIN sh.channels ch ON s.channel_id = ch.channel_id
     JOIN sh.times t ON s.time_id = t.time_id
     WHERE t.calendar_year IN (1998, 1999, 2001)
-    GROUP BY s.cust_id
-    ORDER BY SUM(s.amount_sold) DESC
-    LIMIT 300
+    GROUP BY ch.channel_desc, c.cust_id, c.cust_last_name, c.cust_first_name
+),
+RankedChannelCustomers AS (
+    SELECT 
+        channel_desc,
+        cust_id,
+        cust_last_name,
+        cust_first_name,
+        ROUND(total_amount_sold, 2) AS amount_sold,
+        DENSE_RANK() OVER (
+            PARTITION BY channel_desc 
+            ORDER BY total_amount_sold DESC
+        ) AS customer_rank
+    FROM ChannelCustomerSales
 )
 SELECT 
-    ch.channel_desc,
-    c.cust_id,
-    c.cust_last_name,
-    c.cust_first_name,
-    ROUND(SUM(s.amount_sold), 2) AS amount_sold
-FROM sh.sales s
-JOIN sh.customers c ON s.cust_id = c.cust_id
-JOIN sh.channels ch ON s.channel_id = ch.channel_id
-JOIN sh.times t ON s.time_id = t.time_id
-JOIN Top300Customers top ON c.cust_id = top.cust_id
-WHERE t.calendar_year IN (1998, 1999, 2001)
-GROUP BY ch.channel_desc, c.cust_id, c.cust_last_name, c.cust_first_name
-ORDER BY ch.channel_desc, amount_sold DESC;
+    channel_desc,
+    cust_id,
+    cust_last_name,
+    cust_first_name,
+    amount_sold
+FROM RankedChannelCustomers
+WHERE customer_rank <= 300 -- Filters for top 300 per channel
+ORDER BY channel_desc, amount_sold DESC;
+
 
 
 -- Task 4
